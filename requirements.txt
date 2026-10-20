@@ -8,3 +8,4 @@ mplfinance
 psycopg2-binary
 scipy
 python-dotenv
+pytz

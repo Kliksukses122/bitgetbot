@@ -6,7 +6,7 @@ After=network.target postgresql.service
 Type=simple
 User=root
 WorkingDirectory=/opt/bybit_bot_v8
-ExecStart=/opt/bybit_bot_v8/venv/bin/python main.py
+ExecStart=/opt/bybit_bot_v8/venv/bin/python launcher.py
 Restart=always
 RestartSec=5
 Environment="BOT_ENV=production"

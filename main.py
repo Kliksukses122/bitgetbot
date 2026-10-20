@@ -15,9 +15,16 @@ from modules.quant import calculate_metrics, check_fakeout
 from modules.derivatives import analyze_derivatives
 from modules.smc import analyze_smc
 from modules.patterns import find_pattern
-from modules.discord_bot import send_alert, update_status_dashboard, run_fast_update, send_scan_completion
+from modules.learning_system import init_learning_db, evaluate_signal_suitability
+from modules.telegram_bot import send_alert, update_status_dashboard, run_fast_update, send_scan_completion
 
-exchange = ccxt.bybit({'apiKey': CONFIG['api']['bybit_key'], 'secret': CONFIG['api']['bybit_secret'], 'options': {'defaultType': 'swap'}})
+exchange = ccxt.bitget({
+    'apiKey':   CONFIG['api']['bitget_key'],
+    'secret':   CONFIG['api']['bitget_secret'],
+    'password': CONFIG['api']['bitget_passphrase'],  # Wajib di Bitget
+    'enableRateLimit': True,
+    'options': {'defaultType': 'swap'}
+})
 
 def get_btc_bias():
     try:
@@ -55,6 +62,11 @@ def analyze_ticker(symbol, timeframe, btc_bias, active_signals):
         pattern = find_pattern(df)
         if not pattern: return None
         side = CONFIG['pattern_signals'].get(pattern)
+
+        # AI Learning Filter: Cek histori keberhasilan koin & pola
+        is_suitable, learning_bonus, learning_note = evaluate_signal_suitability(symbol, pattern)
+        if not is_suitable:
+            return None
         
         # 3. SMC Analysis (Optional Filter)
         valid_smc, smc_score, smc_reasons = analyze_smc(df, side)
@@ -120,7 +132,7 @@ def analyze_ticker(symbol, timeframe, btc_bias, active_signals):
             "SMC_Reasons": ", ".join([r for r in smc_reasons if r]), # <--- NEW FIELD
             "Deriv_Reasons": ", ".join(deriv_reasons), "df": df
         }
-    except: return None
+    except Exception as e: return None
 
 def scan():
     start_time = time.time()
@@ -172,6 +184,7 @@ def scan():
 
 if __name__ == "__main__":
     init_db()
+    init_learning_db()
     scan()
     schedule.every(CONFIG['system']['check_interval_hours']).hours.do(scan)
     schedule.every(1).minutes.do(run_fast_update)

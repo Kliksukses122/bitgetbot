@@ -236,7 +236,8 @@ def on_position_update(message):
                 pass
             finally:
                 release_conn(conn)
-    except: pass
+    except Exception as m_e:
+        logger.error(f"WS Payload Master Error: {m_e}")
 
 # ---------------------------------------------------------
 # 📥 SIGNAL INGESTION (Loop)
@@ -347,7 +348,8 @@ def execute_pending_orders():
             try:
                 # 1. Set Leverage
                 try: exchange.set_leverage(int(lev), sym)
-                except: pass
+                except Exception as lev_e:
+                    logger.debug(f"Leverage Set Info {sym}: {lev_e}")
 
                 # 2. Check LIVE Price
                 ticker = exchange.fetch_ticker(sym)
@@ -435,7 +437,8 @@ def check_missed_tps():
                             if str(o['id']) == str(oid):
                                 order_status = o['status']
                                 break
-                    except: pass
+                    except Exception as hist_e:
+                        logger.warning(f"History Fetch Warning {sym}: {hist_e}")
                 
                 # 3. Process Status
                 if order_status == 'closed':
