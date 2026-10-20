@@ -62,6 +62,7 @@ def analyze_ticker(symbol, timeframe, btc_bias, active_signals):
         pattern = find_pattern(df)
         if not pattern: return None
         side = CONFIG['pattern_signals'].get(pattern)
+        if side != 'Long': return None
 
         # AI Learning Filter: Cek histori keberhasilan koin & pola
         is_suitable, learning_bonus, learning_note = evaluate_signal_suitability(symbol, pattern)
