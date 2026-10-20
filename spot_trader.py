@@ -440,10 +440,9 @@ def generate_daily_report():
 # 🏁 MAIN
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
+    init_spot_db()
     logger.info(f"🟢 SpotTrader Memulai | MODE: {mode_tag}")
     logger.info(f"   Saldo Terdeteksi: ${get_available_balance():.2f} USDT")
-
-    init_spot_db()
 
     schedule.every(1).minutes.do(ingest_fresh_signals)
     schedule.every(10).seconds.do(execute_buy_orders)
