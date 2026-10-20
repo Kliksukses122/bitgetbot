@@ -38,6 +38,15 @@ def load_config():
     if os.getenv('TELEGRAM_CHAT_ID'):
         config['api']['telegram_chat_id'] = os.getenv('TELEGRAM_CHAT_ID')
 
+    # Mode Transaksi: DRY_RUN (Default: True untuk aman)
+    # Ubah DRY_RUN=false di .env atau di config.json untuk transaksi uang riil
+    if 'trading' not in config:
+        config['trading'] = {}
+    if os.getenv('DRY_RUN') is not None:
+        config['trading']['dry_run'] = os.getenv('DRY_RUN').lower() in ('true', '1', 'yes')
+    else:
+        config['trading'].setdefault('dry_run', True)
+
     # Defaults for system
     config['system'].setdefault('timezone', 'Asia/Jakarta')
     config['system'].setdefault('max_threads', 20)

@@ -1,11 +1,14 @@
 """
 ╔══════════════════════════════════════════════════════════════╗
-║          SPOT TRADER - Hybrid Paper Trading (Dry Run)        ║
+║               SPOT TRADER - Universal Execution Engine       ║
 ║                                                              ║
-║  - Memindai koin & harga REAL-TIME dari Bitget               ║
-║  - Menggunakan SALDO VIRTUAL (Dry-Run / Paper Trading)        ║
-║  - 100% AMAN: Tanpa menyentuh saldo asli akun               ║
-║  - Mencatat Profit/Loss & kirim notifikasi ke Telegram       ║
+║  Dua Mode Transaksi:                                         ║
+║  1. DRY-RUN (Uang Virtual): Latihan 100% aman tanpa risiko   ║
+║  2. LIVE (Uang Riil): Eksekusi beli/jual nyata di Bitget     ║
+║                                                              ║
+║  Cara Ganti Mode Cepat:                                      ║
+║  - Di config.json: set "dry_run": false                      ║
+║  - Atau di Railway/Env: set DRY_RUN=false                    ║
 ╚══════════════════════════════════════════════════════════════╝
 """
 
@@ -18,13 +21,13 @@ from modules.database import get_conn, release_conn
 from modules.learning_system import record_trade_outcome
 
 # ─────────────────────────────────────────────
-# ⚙️ KONFIGURASI DRY-RUN / PAPER TRADING
+# ⚙️ SAKELAR MODE TRANSAKSI (DRY-RUN vs LIVE)
 # ─────────────────────────────────────────────
-DRY_RUN_MODE       = True         # True = Uang Virtual (Paper Trading)
-VIRTUAL_INITIAL_USDT = 1000.0     # Modal awal virtual $1,000 USDT
-RISK_PERCENT       = 0.05         # 5% dari modal virtual per trade ($50)
+DRY_RUN_MODE       = CONFIG.get('trading', {}).get('dry_run', True)
+VIRTUAL_INITIAL_USDT = 1000.0     # Modal awal simulasi $1,000 USDT
+RISK_PERCENT       = 0.05         # 5% dari modal per trade
 MAX_POSITIONS      = 10           # Maksimal 10 posisi terbuka sekaligus
-TP_SPLIT           = [0.30, 0.30, 0.40]  # Pecah jual: 30% TP1 | 30% TP2 | 40% TP3
+TP_SPLIT           = [0.30, 0.30, 0.40]  # 30% TP1 | 30% TP2 | 40% TP3
 MONITOR_INTERVAL   = 10           # Cek harga setiap 10 detik
 
 # ─────────────────────────────────────────────
@@ -35,10 +38,11 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     datefmt='%H:%M:%S'
 )
-logger = logging.getLogger("SpotTrader-DryRun")
+mode_tag = "DRY-RUN (Simulasi)" if DRY_RUN_MODE else "🚨 LIVE TRADING (UANG RIIL) 🚨"
+logger = logging.getLogger(f"SpotTrader-{mode_tag}")
 
 # ─────────────────────────────────────────────
-# 🔌 KONEKSI EXCHANGE (Hanya untuk baca harga real-time)
+# 🔌 KONEKSI EXCHANGE (SPOT)
 # ─────────────────────────────────────────────
 exchange = ccxt.bitget({
     'apiKey':   CONFIG['api'].get('bitget_key', ''),
@@ -91,7 +95,6 @@ def init_spot_db():
             );
         """)
 
-        # Init saldo awal jika belum ada
         cur.execute("SELECT balance_usdt FROM virtual_wallet WHERE id = 1")
         row = cur.fetchone()
         if not row:
@@ -109,23 +112,33 @@ def init_spot_db():
             );
         """)
         conn.commit()
-        logger.info("✅ Spot Dry-Run DB Ready.")
+        logger.info(f"✅ Spot DB Ready | Mode: {mode_tag}")
     except Exception as e:
         logger.error(f"❌ DB Init Error: {e}")
     finally:
         release_conn(conn)
 
-def get_virtual_balance():
-    conn = get_conn()
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT balance_usdt FROM virtual_wallet WHERE id = 1")
-        row = cur.fetchone()
-        return float(row[0]) if row else VIRTUAL_INITIAL_USDT
-    finally:
-        release_conn(conn)
+def get_available_balance():
+    if DRY_RUN_MODE:
+        conn = get_conn()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT balance_usdt FROM virtual_wallet WHERE id = 1")
+            row = cur.fetchone()
+            return float(row[0]) if row else VIRTUAL_INITIAL_USDT
+        finally:
+            release_conn(conn)
+    else:
+        try:
+            balance = exchange.fetch_balance()
+            return float(balance['free'].get('USDT', 0))
+        except Exception as e:
+            logger.error(f"❌ Gagal ambil saldo riil Bitget: {e}")
+            return 0.0
 
 def update_virtual_balance(delta):
+    if not DRY_RUN_MODE:
+        return
     conn = get_conn()
     try:
         cur = conn.cursor()
@@ -147,9 +160,9 @@ def ingest_fresh_signals():
         if current_active >= MAX_POSITIONS:
             return
 
-        usdt_free = get_virtual_balance()
+        usdt_free = get_available_balance()
         if usdt_free < 5:
-            logger.warning(f"⚠️ Saldo Virtual habis/terlalu rendah: ${usdt_free:.2f}")
+            logger.warning(f"⚠️ Saldo USDT terlalu rendah: ${usdt_free:.2f}")
             return
 
         cur.execute("""
@@ -177,14 +190,15 @@ def ingest_fresh_signals():
                 continue
 
             qty = cost_usdt / entry
+            is_dry = 1 if DRY_RUN_MODE else 0
 
             cur.execute("""
                 INSERT INTO spot_trades
                     (signal_id, symbol, pattern, entry_price, sl_price, tp1, tp2, tp3, qty_total, qty_remaining, cost_usdt, status, is_dry_run)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING_BUY', 1)
-            """, (sig_id, spot_symbol, pat, entry, sl, tp1, tp2, tp3, qty, qty, cost_usdt))
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'PENDING_BUY', %s)
+            """, (sig_id, spot_symbol, pat, entry, sl, tp1, tp2, tp3, qty, qty, cost_usdt, is_dry))
 
-            logger.info(f"📥 [DRY-RUN] Sinyal Ingested: {spot_symbol} | Virtual Modal: ${cost_usdt:.2f} | Qty: {qty:.4f}")
+            logger.info(f"📥 [{mode_tag}] Sinyal: {spot_symbol} | Modal: ${cost_usdt:.2f} | Qty: {qty:.4f}")
             current_active += 1
 
         conn.commit()
@@ -195,7 +209,7 @@ def ingest_fresh_signals():
 
 
 # ─────────────────────────────────────────────
-# 🛒 STEP 2: EKSEKUSI BELI (SIMULASI HARGA NYATA)
+# 🛒 STEP 2: EKSEKUSI BELI (MARKET/LIMIT)
 # ─────────────────────────────────────────────
 def execute_buy_orders():
     conn = get_conn()
@@ -220,21 +234,34 @@ def execute_buy_orders():
                 ticker = exchange.fetch_ticker(sym)
                 current_price = float(ticker['last'])
 
-                # Jika harga saat ini <= target entry, order virtual terpenuhi
                 if current_price <= entry:
-                    logger.info(f"⚡ [DRY-RUN BUY] {sym}: Harga real {current_price} <= Entry {entry}. Beli VIRTUAL!")
-                    update_virtual_balance(-cost)
-                    cur.execute("""
-                        UPDATE spot_trades
-                        SET status = 'OPEN', entry_price = %s,
-                            buy_order_id = 'DRY_RUN_ORDER', updated_at = datetime('now')
-                        WHERE id = %s
-                    """, (current_price, trade_id))
-                    conn.commit()
-                else:
-                    logger.debug(f"⏳ [DRY-RUN] {sym} Menunggu harga menyentuh entry ({current_price} vs {entry})")
+                    if DRY_RUN_MODE:
+                        # Simulasi Beli
+                        logger.info(f"⚡ [DRY-RUN BUY] {sym}: Harga {current_price} <= Entry {entry}")
+                        update_virtual_balance(-cost)
+                        cur.execute("""
+                            UPDATE spot_trades
+                            SET status = 'OPEN', entry_price = %s,
+                                buy_order_id = 'VIRTUAL_ORDER', updated_at = datetime('now')
+                            WHERE id = %s
+                        """, (current_price, trade_id))
+                        conn.commit()
+                    else:
+                        # Transaksi RIIL di Exchange
+                        qty_precise = float(exchange.amount_to_precision(sym, qty))
+                        logger.info(f"🚨 [LIVE BUY] Membeli {qty_precise} {sym} di harga ${current_price}...")
+                        res = exchange.create_order(sym, 'market', 'buy', qty_precise)
+                        actual_entry = float(res.get('average') or res.get('price') or current_price)
+                        cur.execute("""
+                            UPDATE spot_trades
+                            SET status = 'OPEN', entry_price = %s, qty_total = %s, qty_remaining = %s,
+                                buy_order_id = %s, updated_at = datetime('now')
+                            WHERE id = %s
+                        """, (actual_entry, qty_precise, qty_precise, str(res.get('id', '')), trade_id))
+                        conn.commit()
+                        logger.info(f"✅ [LIVE BOUGHT] {sym} ID: {res.get('id')} @ {actual_entry}")
             except Exception as e:
-                logger.warning(f"⚠️ [DRY-RUN] Gagal cek harga {sym}: {e}")
+                logger.error(f"❌ Gagal beli {sym}: {e}")
 
     except Exception as e:
         logger.error(f"❌ Execute Buy Loop Error: {e}")
@@ -243,8 +270,26 @@ def execute_buy_orders():
 
 
 # ─────────────────────────────────────────────
-# 💰 STEP 3: MONITOR & JUAL VIRTUAL (REAL-TIME PRICE)
+# 💰 STEP 3: EKSEKUSI JUAL & MONITOR HARGA
 # ─────────────────────────────────────────────
+def execute_sell(sym, qty, reason):
+    """Jual koin (Simulasi jika Dry Run, Transaksi Riil jika Live)"""
+    if DRY_RUN_MODE:
+        ticker = exchange.fetch_ticker(sym)
+        sold_price = float(ticker['last'])
+        logger.info(f"💰 [DRY-RUN JUAL {reason}] {sym} | {qty:.4f} koin @ ${sold_price}")
+        return sold_price
+    else:
+        try:
+            qty_precise = float(exchange.amount_to_precision(sym, qty))
+            res = exchange.create_order(sym, 'market', 'sell', qty_precise)
+            sold_price = float(res.get('average') or res.get('price') or 0)
+            logger.info(f"🚨 [LIVE JUAL {reason}] {sym} | {qty_precise} koin @ ${sold_price}")
+            return sold_price
+        except Exception as e:
+            logger.error(f"❌ Gagal jual riil {sym}: {e}")
+            return 0.0
+
 def monitor_open_positions():
     conn = get_conn()
     try:
@@ -279,10 +324,11 @@ def monitor_open_positions():
 
             # ── STOP LOSS HIT ──
             if current_price <= sl:
-                loss = (current_price - entry) * qty_rem
+                sold_at = execute_sell(sym, qty_rem, "STOP LOSS")
+                sold_at = sold_at if sold_at > 0 else current_price
+                loss = (sold_at - entry) * qty_rem
                 final_pnl = pnl_usdt + loss
-                returned_cash = (current_price * qty_rem)
-                update_virtual_balance(returned_cash)
+                update_virtual_balance(sold_at * qty_rem)
 
                 cur.execute("""
                     UPDATE spot_trades
@@ -291,17 +337,18 @@ def monitor_open_positions():
                     WHERE id = %s
                 """, (final_pnl, trade_id))
                 conn.commit()
-                # 🧠 Umpan ke AI Learning System (LOSS)
+
                 if pat: record_trade_outcome(sym, pat, is_win=False)
-                logger.warning(f"🛑 [DRY-RUN SL] {sym} Terkena SL di ${current_price} | PnL: ${final_pnl:.2f} | Saldo Virtual: ${get_virtual_balance():.2f}")
+                logger.warning(f"🛑 [SL HIT] {sym} @ ${sold_at} | PnL: ${final_pnl:.2f}")
                 continue
 
             # ── TAKE PROFIT 3 (TUTUP SEMUA) ──
             if current_price >= tp3:
-                profit = (current_price - entry) * qty_rem
+                sold_at = execute_sell(sym, qty_rem, "TP3 FULL CLOSE")
+                sold_at = sold_at if sold_at > 0 else current_price
+                profit = (sold_at - entry) * qty_rem
                 final_pnl = pnl_usdt + profit
-                returned_cash = (current_price * qty_rem)
-                update_virtual_balance(returned_cash)
+                update_virtual_balance(sold_at * qty_rem)
 
                 cur.execute("""
                     UPDATE spot_trades
@@ -310,17 +357,18 @@ def monitor_open_positions():
                     WHERE id = %s
                 """, (final_pnl, trade_id))
                 conn.commit()
-                # 🧠 Umpan ke AI Learning System (WIN)
+
                 if pat: record_trade_outcome(sym, pat, is_win=True)
-                logger.info(f"🏆 [DRY-RUN TP3 WIN] {sym} Capai target penuh di ${current_price}! PnL: +${final_pnl:.2f} | Saldo: ${get_virtual_balance():.2f}")
+                logger.info(f"🏆 [TP3 FULL WIN] {sym} @ ${sold_at} | PnL: +${final_pnl:.2f}")
                 continue
 
             # ── TAKE PROFIT 2 (Jual 30%) ──
             if current_price >= tp2 and not tp2_hit:
                 qty_sell = qty_total * TP_SPLIT[1]
-                profit = (current_price - entry) * qty_sell
-                returned_cash = (current_price * qty_sell)
-                update_virtual_balance(returned_cash)
+                sold_at = execute_sell(sym, qty_sell, "TP2 (30%)")
+                sold_at = sold_at if sold_at > 0 else current_price
+                profit = (sold_at - entry) * qty_sell
+                update_virtual_balance(sold_at * qty_sell)
 
                 new_rem = max(0, qty_rem - qty_sell)
                 new_pnl = pnl_usdt + profit
@@ -331,15 +379,16 @@ def monitor_open_positions():
                     WHERE id = %s
                 """, (new_rem, new_pnl, trade_id))
                 conn.commit()
-                logger.info(f"✅ [DRY-RUN TP2] {sym} Capai TP2 di ${current_price} | PnL sementara: +${new_pnl:.2f}")
+                logger.info(f"✅ [TP2 HIT] {sym} @ ${sold_at} | PnL: +${new_pnl:.2f}")
                 continue
 
             # ── TAKE PROFIT 1 (Jual 30%) ──
             if current_price >= tp1 and not tp1_hit:
                 qty_sell = qty_total * TP_SPLIT[0]
-                profit = (current_price - entry) * qty_sell
-                returned_cash = (current_price * qty_sell)
-                update_virtual_balance(returned_cash)
+                sold_at = execute_sell(sym, qty_sell, "TP1 (30%)")
+                sold_at = sold_at if sold_at > 0 else current_price
+                profit = (sold_at - entry) * qty_sell
+                update_virtual_balance(sold_at * qty_sell)
 
                 new_rem = max(0, qty_rem - qty_sell)
                 new_pnl = pnl_usdt + profit
@@ -350,7 +399,7 @@ def monitor_open_positions():
                     WHERE id = %s
                 """, (new_rem, new_pnl, trade_id))
                 conn.commit()
-                logger.info(f"✅ [DRY-RUN TP1] {sym} Capai TP1 di ${current_price} | PnL sementara: +${new_pnl:.2f}")
+                logger.info(f"✅ [TP1 HIT] {sym} @ ${sold_at} | PnL: +${new_pnl:.2f}")
 
     except Exception as e:
         logger.error(f"❌ Monitor Positions Error: {e}")
@@ -379,8 +428,8 @@ def generate_daily_report():
             total, wins, losses, pnl = row
             pnl      = pnl or 0
             win_rate = (wins / total) * 100 if total > 0 else 0
-            bal = get_virtual_balance()
-            logger.info(f"📊 [DRY-RUN REPORT] Saldo: ${bal:.2f} | PnL: ${pnl:.2f} | WR: {win_rate:.1f}% ({wins}W/{losses}L)")
+            bal = get_available_balance()
+            logger.info(f"📊 [{mode_tag}] Saldo: ${bal:.2f} | PnL: ${pnl:.2f} | WR: {win_rate:.1f}% ({wins}W/{losses}L)")
     except Exception as e:
         logger.error(f"❌ Report Error: {e}")
     finally:
@@ -391,10 +440,8 @@ def generate_daily_report():
 # 🏁 MAIN
 # ─────────────────────────────────────────────
 if __name__ == "__main__":
-    logger.info("🟢 SpotTrader DRY-RUN AKTIF (Simulasi Uang Virtual $1,000)")
-    logger.info("   📡 Menggunakan harga koin REAL-TIME dari Bitget")
-    logger.info("   🛡️ 100% AMAN: Saldo asli akun TIDAK disentuh sama sekali")
-    logger.info(f"   Saldo Virtual Anda: ${get_virtual_balance():.2f} USDT")
+    logger.info(f"🟢 SpotTrader Memulai | MODE: {mode_tag}")
+    logger.info(f"   Saldo Terdeteksi: ${get_available_balance():.2f} USDT")
 
     init_spot_db()
 
@@ -403,7 +450,7 @@ if __name__ == "__main__":
     schedule.every(MONITOR_INTERVAL).seconds.do(monitor_open_positions)
     schedule.every().day.at("00:01").do(generate_daily_report)
 
-    logger.info("🚀 Menunggu sinyal dari Scanner...")
+    logger.info("🚀 Bot Berjalan...")
     ingest_fresh_signals()
 
     while True:
