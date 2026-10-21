@@ -50,7 +50,10 @@ def load_config():
     # Defaults for system
     config['system'].setdefault('timezone', 'Asia/Jakarta')
     config['system'].setdefault('max_threads', 20)
-    config['system'].setdefault('check_interval_hours', 1)
+    if os.getenv('SCAN_INTERVAL_MINUTES'):
+        config['system']['check_interval_minutes'] = int(os.getenv('SCAN_INTERVAL_MINUTES'))
+    else:
+        config['system'].setdefault('check_interval_minutes', 5)
     config['system'].setdefault('timeframes', ["1h", "4h", "1d", "1w"])
 
     config['setup'].setdefault('fib_entry_start', 0.5)
