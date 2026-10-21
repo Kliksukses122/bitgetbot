@@ -54,7 +54,7 @@ def load_config():
         config['system']['check_interval_minutes'] = int(os.getenv('SCAN_INTERVAL_MINUTES'))
     else:
         config['system'].setdefault('check_interval_minutes', 5)
-    config['system'].setdefault('timeframes', ["1h", "4h", "1d", "1w"])
+    config['system'].setdefault('timeframes', ["15m", "1h", "4h"])
 
     config['setup'].setdefault('fib_entry_start', 0.5)
     config['setup'].setdefault('fib_entry_end', 0.618)
@@ -63,9 +63,9 @@ def load_config():
     config['setup'].setdefault('fib_tp_2', 1.618)
     config['setup'].setdefault('fib_tp_3', 2.618)
 
-    config['strategy'].setdefault('min_tech_score', 5)
-    config['strategy'].setdefault('min_quant_score', 3)
-    config['strategy'].setdefault('risk_reward_min', 3.0)
+    config['strategy'].setdefault('min_tech_score', 3)
+    config['strategy'].setdefault('min_quant_score', 1)
+    config['strategy'].setdefault('risk_reward_min', 1.5)
 
     config['indicators'].setdefault('min_rvol', 2.0)
 

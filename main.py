@@ -28,7 +28,7 @@ exchange = ccxt.bitget({
 
 def get_btc_bias():
     try:
-        bars = exchange.fetch_ohlcv('BTC/USDT', '1d', limit=100)
+        bars = exchange.fetch_ohlcv('BTC/USDT', '4h', limit=100)
         if not bars: return "Sideways"
         df = pd.DataFrame(bars, columns=['t','o','h','l','c','v'])
         df['ema13'] = ta.ema(df['c'], length=13)
@@ -92,7 +92,9 @@ def analyze_ticker(symbol, timeframe, btc_bias, active_signals):
 
         total_score = tech_score + smc_score + quant_score + deriv_score
         
-        if "Bearish" in btc_bias and side == "Long": return None
+        # BTC Bias Soft Filter: jika Bearish, kurangi skor/hanya izinkan jika quant/tech score kuat
+        if "Bearish" in btc_bias and side == "Long" and total_score < 4:
+            return None
         if "Bullish" in btc_bias and side == "Short": return None
         
         valid_fo, fo_msg = check_fakeout(df, CONFIG['indicators']['min_rvol'])

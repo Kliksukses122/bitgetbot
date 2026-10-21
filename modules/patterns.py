@@ -26,10 +26,10 @@ def find_pattern(df):
     enabled = CONFIG['patterns']
     s_high, s_low = get_slope(peaks[-4:]), get_slope(valleys[-4:])
     
-    if enabled.get('ascending_triangle') and abs(s_high) < 0.0005 and s_low > 0.0002: return 'ascending_triangle'
+    if enabled.get('ascending_triangle') and abs(s_high) < 0.002 and s_low > 0.0001: return 'ascending_triangle'
     if enabled.get('descending_triangle') and abs(s_low) < 0.0005 and s_high < -0.0002: return 'descending_triangle'
     if enabled.get('double_bottom') and check_alignment(valleys[-2:]): return 'double_bottom'
     if enabled.get('double_top') and check_alignment(peaks[-2:]): return 'double_top'
-    if enabled.get('bull_flag') and -0.002 < s_high < -0.0002 and -0.002 < s_low < -0.0002: return 'bull_flag'
-    if enabled.get('bullish_rectangle') and abs(s_high) < 0.0005 and abs(s_low) < 0.0005: return 'bullish_rectangle'
+    if enabled.get('bull_flag') and -0.004 < s_high < 0 and -0.004 < s_low < 0: return 'bull_flag'
+    if enabled.get('bullish_rectangle') and abs(s_high) < 0.002 and abs(s_low) < 0.002: return 'bullish_rectangle'
     return None
